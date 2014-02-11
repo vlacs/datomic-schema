@@ -8,16 +8,40 @@
 (defonce schemalist (atom #{}))
 (defonce partlist (atom #{}))
 
+(defn schema*
+  "Given the name, partition, and fields of a schema, return a map defining the schema.
+   TODO: Example:"
+  [nm & body]
+  (let [base {:name (name nm)
+              :basetype nm 
+              :namespace (name nm)}]
+    (reduce merge
+            base
+            body)))
+
 (defmacro defschema [nm & body]
   `(do
-     (def ~nm (merge ~{:name (name nm) :basetype (keyword (name nm)) :namespace (name nm)} ~@body))
+     (def ~nm (schema* ~(keyword nm) ~@body))
      (swap! schemalist conj (var ~nm))))
 
-(defmacro defpart [nm]
-  `(swap! partlist conj ~(keyword "db.part" (name nm))))
+(defn part* [nm]
+  (keyword "db.part" (name nm)))
 
-(defmacro part [nm]
-  `{:part ~(keyword "db.part" (name nm))})
+;; This has to be a macro, in order to support (port name) where 'name
+;; isn't actually interned. :(
+;; Ditching this lib because of its reliance on state, and because
+;; gouging that out is messy to the point where it's no longer valuable.
+(defmacro part
+  "Verifies that the specified name is a defined partition, and if so,
+   returns it for merging into a schema map."
+  ([nm]
+     (part @partlist nm))
+  ([partlist nm]
+     (if-let [p (get partlist (part* nm))]
+       {:part p})))
+
+(defmacro defpart [nm]
+  `(swap! partlist conj ~(part* nm)))
 
 ;; The datomic schema conversion functions
 (defn get-enums [tempid-fn basens part enums]
@@ -64,8 +88,14 @@
          :db/ident part
          :db.install/_partition :db.part/db}))
 
-(defn build-parts [tempid-fn]
-  (reduce (partial part-to-datomic tempid-fn) [] @partlist))
+(defn build-parts
+  ([tempid-fn]
+     (build-parts @partlist tempid-fn))
+  ([partlist tempid-fn]
+     (reduce (partial part-to-datomic tempid-fn) [] partlist)))
 
-(defn build-schema [tempid-fn]
-  (apply (partial generate-schema tempid-fn) (map #(deref %) @schemalist)))
+(defn build-schema
+  ([tempid-fn]
+     (build-schema @schemalist tempid-fn))
+  ([schemalist tempid-fn]
+     (apply (partial generate-schema tempid-fn) (map #(deref %) schemalist))))
